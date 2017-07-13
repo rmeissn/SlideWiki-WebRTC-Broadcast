@@ -1,0 +1,3 @@
+- Anmeldung verbessern, sodass direkt nur mit dem Präsenter gesprochen wird, anstatt mit allen
+- Abmeldung integrieren (Socket wird automatisch beendet) - Peer bei Präsenter löschen
+- Wenn Präsenter den room schießt, alle Sockets raus werfen und RPCs beenden
