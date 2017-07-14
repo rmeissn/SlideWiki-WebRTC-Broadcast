@@ -30,7 +30,7 @@ var sdpConstraints = {
 
 var room = prompt("Enter room name:");;
 
-var socket = io('http://localhost:8080');
+var socket = io('');
 
 if (room !== '') {
   socket.emit('create or join', room);
