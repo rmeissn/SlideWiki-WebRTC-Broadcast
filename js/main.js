@@ -5,7 +5,8 @@ var peerFinished = false;
 var localStream;
 var myID;
 var presenterID;
-var pcs = [];
+//var pcs = [];
+var pcs = {} // {<socketID>: RPC, <socketID>: RPC}
 var isStarted = [false];
 var remoteStreams = [];
 var turnReady;
@@ -42,7 +43,7 @@ function setMyID(){
   return myID;
 }
 
-socket.on('created', function(room, socketID) { //erhält nur Präsentator
+socket.on('created', (room, socketID) => { //erhält nur Präsentator
   console.log('Created room ' + room);
   isInitiator = true;
   setMyID();
@@ -56,16 +57,16 @@ socket.on('created', function(room, socketID) { //erhält nur Präsentator
   });
 });
 
-socket.on('join', function (room){ //erhält der ganze Raum, aber nicht der Listener der gerade beitritt
+socket.on('join', (room, socketID) => { //erhält der ganze Raum, aber nicht der Listener der gerade beitritt
   // a listener will join the room
   console.log('Another peer made a request to join room ' + room);
   if(isInitiator){
     console.log('This peer is the initiator of room ' + room + '!');
-    sendMessage('ID of presenter');
+    socket.emit('ID of presenter', room, myID)
   }
 });
 
-socket.on('joined', function(room) { //erhält nur der Listener, der gerade beitritt
+socket.on('joined', (room) => { //erhält nur der Listener, der gerade beitritt
   // a listener has joined the room
   console.log('joined: ' + room);
   setMyID();
@@ -75,10 +76,15 @@ socket.on('joined', function(room) { //erhält nur der Listener, der gerade beit
   });
 });
 
-socket.on('full', function(room) { //erhält nur der Listener, der gerade beitritt
+socket.on('full', (room) => { //erhält nur der Listener, der gerade beitritt
   console.log('Room ' + room + ' is full');
   socket.close();
   alert('This room is already full - sorry!');
+});
+
+socket.on('ID of presenter', (id) => {
+  console.log('Received ID of presenter: ', id);
+  presenterID = id;
 });
 
 socket.on('log', function(array) {
@@ -88,38 +94,36 @@ socket.on('log', function(array) {
 
 ////////////////////////////////////////////////
 
-function sendMessage(cmd, data = undefined) {
-  console.log('Sending message: ', cmd, data);
-  socket.emit('message', {"cmd": cmd, "data": data, "sender": myID}, room);
+function sendMessage(cmd, data = undefined, receiver = undefined) {
+  console.log('Sending message: ', cmd, data, receiver);
+  socket.emit('message', {"cmd": cmd, "data": data, "sender": myID, "receiver": receiver}, room);
 }
 
 // This client receives a message
 socket.on('message', function(message) {
   if(message.sender === myID){ //Filter für Nachrichten vom mir selbst
-    if( message.cmd === 'peer wants to connect' && pcs.length === 0){ //peer triggert sich selbst
-      start();
+    if( message.cmd === 'peer wants to connect' && Object.keys(pcs).length === 0){ //peer triggert sich selbst
+      start(presenterID);
     }
-  } else if(isInitiator || !peerFinished){ //von peers
+  } else if(message.receiver === myID){ //an mich adressiert
     console.log('Recieved message from peer: ', message);
-    if(message.cmd === 'ID of presenter'){ //erhalten alle außer initiator
-      presenterID = message.sender;
-    } else if( message.cmd === 'peer wants to connect' && isInitiator){ //erhalten alle außer der peer selbst, sobald ein peer zusteigt, kommt nur von peer
-      start();
+    if( message.cmd === 'peer wants to connect' && isInitiator){ //erhalten alle außer der peer selbst, sobald ein peer zusteigt, kommt nur von peer
+      start(message.sender);
     } else if (message.cmd === 'offer' || (message.cmd === 'answer' && isInitiator)) { //offer kommt von initiator, answer von peer
-      pcs[pcs.length - 1].setRemoteDescription(new RTCSessionDescription(message.data));
+      pcs[message.sender].setRemoteDescription(new RTCSessionDescription(message.data));
       readyForCandidates = true;
       if(message.cmd === 'offer') // führt nur der peer aus
-        doAnswer();
+        doAnswer(message.sender);
    } if (message.cmd === 'candidate') {
      try { //Catch defective candidates
        var candidate = new RTCIceCandidate({
          sdpMLineIndex: message.data.label,
          candidate: message.data.candidate
        });
-       pcs[pcs.length - 1].addIceCandidate(candidate).catch((e) => {}); //Catch defective candidates
+       pcs[message.sender].addIceCandidate(candidate).catch((e) => {}); //Catch defective candidates
      } catch (e) {}
    } else if (message.cmd === 'bye' && isInitiator) { //TODO später umbauen auf RPC transmission of commands
-      handleRemoteHangup();
+      handleRemoteHangup(message.sender);
     }
   }
 });
@@ -144,39 +148,47 @@ function gotStream(stream) {
     $('#videos').before('<p>This is me</p>');
   }
   localStream = stream;
-  if(!isInitiator)
-    sendMessage('peer wants to connect');
+  function sendASAP () {
+    if(presenterID)
+      sendMessage('peer wants to connect', undefined, presenterID);
+    else
+      setTimeout(() => { sendASAP(); }, 10);
+  }
+  if(!isInitiator){
+    sendASAP();
+  }
 }
 
-if (location.hostname !== 'localhost') {
-  requestTurn(
-    'https://computeengineondemand.appspot.com/turn?username=41784574&key=4080218913'
-  );
-}
+// if (location.hostname !== 'localhost') {
+//   requestTurn(
+//     'https://computeengineondemand.appspot.com/turn?username=41784574&key=4080218913'
+//   );
+// }
 
-function start() {
+function start(peerID) {
   if (typeof localStream !== 'undefined') {
     console.log('creating RTCPeerConnnection for', (isInitiator) ? 'initiator' : 'peer');
-    createPeerConnection();
+    createPeerConnection(peerID);
     if(isInitiator)
-      pcs[pcs.length - 1].addStream(localStream);
+      pcs[peerID].addStream(localStream);
     if (isInitiator)
-      doCall();
+      doCall(peerID);
   }
 }
 
 window.onbeforeunload = function() {
-  sendMessage('bye');
+  sendMessage('bye', undefined, presenterID);
+  hangup();
 };
 
 /////////////////////////////////////////////////////////
 
-function createPeerConnection() {
+function createPeerConnection(peerID) {
   try {
-    pcs[pcs.length] = new RTCPeerConnection(null);
-    pcs[pcs.length - 1].onicecandidate = handleIceCandidate;
-    pcs[pcs.length - 1].onaddstream = handleRemoteStreamAdded;
-    pcs[pcs.length - 1].onremovestream = handleRemoteStreamRemoved;
+    pcs[peerID] = new RTCPeerConnection(null);
+    pcs[peerID].onicecandidate = handleIceCandidate.bind(this, peerID);
+    pcs[peerID].onaddstream = handleRemoteStreamAdded;
+    pcs[peerID].onremovestream = handleRemoteStreamRemoved;
     console.log('Created RTCPeerConnnection');
   } catch (e) {
     console.log('Failed to create PeerConnection, exception: ' + e.message);
@@ -185,20 +197,7 @@ function createPeerConnection() {
   }
 }
 
-function handleSignalingStateChange(event) {
-  console.log('Signaling state: ', pcs[pcs.length - 1].signalingState);
-  switch(pcs[pcs.length - 1].signalingState) {
-    case "stable":
-      console.log('Connection established!');
-      if(!isInitiator) {
-        peerFinished = true;
-        //socket.close();
-      }
-      break;
-  }
-}
-
-function handleIceCandidate(event) {
+function handleIceCandidate(peerID, event) {
 
   //console.log('icecandidate event: ', event);
   if (event && ((event.target && event.target.iceGatheringState !== 'complete' ) || event.candidate !== null)) {
@@ -207,7 +206,7 @@ function handleIceCandidate(event) {
       label: event.candidate.sdpMLineIndex,
       id: event.candidate.sdpMid,
       candidate: event.candidate.candidate
-    });
+    }, peerID);
   } else {
     console.log('End of candidates.');
   }
@@ -217,7 +216,7 @@ function handleRemoteStreamAdded(event) {
   if(isInitiator === false){
     $('#videos').append('<video class="remoteVideos" autoplay></video>');
     let remoteVideos = $('.remoteVideos');
-    remoteVideos[remoteVideos.length - 1].src = window.URL.createObjectURL(event.stream);
+    remoteVideos[remoteVideos.length - 1].srcObject = event.stream;
     remoteStreams[remoteVideos.length - 1] = event.stream;
     $('#videos').before('<p>This is the presenter</p>');
   }
@@ -227,25 +226,25 @@ function handleCreateOfferError(event) {
   console.log('createOffer() error: ', event);
 }
 
-function doCall() { //das macht der Präsentator
+function doCall(peerID) { //das macht der Präsentator
   //console.log('Sending offer to peer');
-  pcs[pcs.length - 1].createOffer(setLocalAndSendMessage, handleCreateOfferError);
+  pcs[peerID].createOffer(setLocalAndSendMessage.bind(this, peerID), handleCreateOfferError);
 }
 
-function doAnswer() {
+function doAnswer(peerID) {
   //console.log('Sending answer to initiator.');
-  pcs[pcs.length - 1].createAnswer().then(
-    setLocalAndSendMessage,
+  pcs[peerID].createAnswer().then(
+    setLocalAndSendMessage.bind(this, peerID),
     onCreateSessionDescriptionError
   );
 }
 
-function setLocalAndSendMessage(sessionDescription) {
+function setLocalAndSendMessage(peerID, sessionDescription) {
   // Set Opus as the preferred codec in SDP if Opus is present.
-  // sessionDescription.sdp = preferOpus(sessionDescription.sdp);
-  pcs[pcs.length - 1].setLocalDescription(sessionDescription);
+  sessionDescription.sdp = preferOpus(sessionDescription.sdp);
+  pcs[peerID].setLocalDescription(sessionDescription);
   //console.log('setLocalAndSendMessage sending message', sessionDescription);
-  sendMessage(sessionDescription.type, sessionDescription);
+  sendMessage(sessionDescription.type, sessionDescription, peerID);
 }
 
 function onCreateSessionDescriptionError(error) {
@@ -285,23 +284,22 @@ function handleRemoteStreamRemoved(event) {
   console.log('Remote stream removed. Event: ', event);
 }
 
-function hangup() {
+function hangup() { //called by peer
   console.log('Hanging up.');
-  stop();
-  sendMessage('bye');
+  stop(presenterID);
+  sendMessage('bye', undefined, presenterID);
 }
 
-function handleRemoteHangup() {
+function handleRemoteHangup(peerID) { //called by initiator
   console.log('Session terminated.');
-  stop();
+  stop(peerID);
 }
 
-function stop() {
-  //if(!isInitiator){
-    // isAudioMuted = false;
-    // isVideoMuted = false;
-    pcs[pcs.length - 1].close();
-    pcs[pcs.length - 1] = null;
+function stop(peerID) {
+    pcs[peerID].close();
+    delete pcs[peerID];
+    if(!isInitiator)
+      socket.close();
   //}
 }
 

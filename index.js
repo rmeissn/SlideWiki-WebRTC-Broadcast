@@ -29,6 +29,10 @@ io.on('connection', function(socket) {
     io.sockets.in(room).emit('message', data);
   });
 
+  socket.on('ID of presenter', function(room, presenterID) {
+    io.sockets.in(room).emit('ID of presenter', presenterID);
+  });
+
   socket.on('create or join', function(room) {
     log('Received request to create or join room ' + room);
 
@@ -42,7 +46,7 @@ io.on('connection', function(socket) {
       console.log("Number participants for room ", room,": ", RoomParticipants(room));
     } else if (RoomParticipants(room) < 10) {
       log('Client ID ' + socket.id + ' joined room ' + room);
-      io.sockets.in(room).emit('join', room);
+      io.sockets.in(room).emit('join', room, socket.id);
       socket.join(room).emit('joined', room, socket.id);
       io.sockets.in(room).emit('ready');
       console.log("Number participants for room ", room,": ", RoomParticipants(room));
