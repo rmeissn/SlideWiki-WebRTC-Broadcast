@@ -15,7 +15,7 @@ RUN npm install
 #   Configuration   #
 # ----------------- #
 
-EXPOSE 8080
+EXPOSE 80
 
 # ----------- #
 #   Cleanup   #

@@ -99,6 +99,20 @@ function sendMessage(cmd, data = undefined, receiver = undefined) {
   socket.emit('message', {"cmd": cmd, "data": data, "sender": myID, "receiver": receiver}, room);
 }
 
+function sendRTCMessage(cmd, data = undefined, receiver = undefined) {
+  let message = JSON.stringify({"cmd": cmd, "data": data});
+  if(receiver){ //send to one peer only
+    pcs[receiver].dataChannel.send(message)
+  } else { //broadcast from initiator
+    for(var i in pcs) {
+      if(pcs[i].dataChannel){
+        console.log('Sending Message to peer: ', i);
+        pcs[i].dataChannel.send(message);
+      }
+    }
+  }
+}
+
 // This client receives a message
 socket.on('message', function(message) {
   if(message.sender === myID){ //Filter für Nachrichten vom mir selbst
@@ -110,7 +124,7 @@ socket.on('message', function(message) {
     if( message.cmd === 'peer wants to connect' && isInitiator){ //erhalten alle außer der peer selbst, sobald ein peer zusteigt, kommt nur von peer
       start(message.sender);
     } else if (message.cmd === 'offer' || (message.cmd === 'answer' && isInitiator)) { //offer kommt von initiator, answer von peer
-      pcs[message.sender].setRemoteDescription(new RTCSessionDescription(message.data));
+      pcs[message.sender].RTCconnection.setRemoteDescription(new RTCSessionDescription(message.data));
       readyForCandidates = true;
       if(message.cmd === 'offer') // führt nur der peer aus
         doAnswer(message.sender);
@@ -120,7 +134,7 @@ socket.on('message', function(message) {
          sdpMLineIndex: message.data.label,
          candidate: message.data.candidate
        });
-       pcs[message.sender].addIceCandidate(candidate).catch((e) => {}); //Catch defective candidates
+       pcs[message.sender].RTCconnection.addIceCandidate(candidate).catch((e) => {}); //Catch defective candidates
      } catch (e) {}
    } else if (message.cmd === 'bye' && isInitiator) { //TODO später umbauen auf RPC transmission of commands
       handleRemoteHangup(message.sender);
@@ -170,7 +184,7 @@ function start(peerID) {
     console.log('creating RTCPeerConnnection for', (isInitiator) ? 'initiator' : 'peer');
     createPeerConnection(peerID);
     if(isInitiator)
-      pcs[peerID].addStream(localStream);
+      pcs[peerID].RTCconnection.addStream(localStream);
     if (isInitiator)
       doCall(peerID);
   }
@@ -185,14 +199,56 @@ window.onbeforeunload = function() {
 
 function createPeerConnection(peerID) {
   try {
-    pcs[peerID] = new RTCPeerConnection(null);
-    pcs[peerID].onicecandidate = handleIceCandidate.bind(this, peerID);
-    pcs[peerID].onaddstream = handleRemoteStreamAdded;
-    pcs[peerID].onremovestream = handleRemoteStreamRemoved;
+    pcs[peerID] = {};
+    pcs[peerID].RTCconnection = new RTCPeerConnection(null);
+    pcs[peerID].RTCconnection.onicecandidate = handleIceCandidate.bind(this, peerID);
+    pcs[peerID].RTCconnection.onaddstream = handleRemoteStreamAdded;
+    pcs[peerID].RTCconnection.onremovestream = handleRemoteStreamRemoved;
+    if(isInitiator){
+      pcs[peerID].dataChannel = pcs[peerID].RTCconnection.createDataChannel('messages', {
+        ordered: true
+      });
+      onDataChannelCreated(pcs[peerID].dataChannel, peerID);
+    } else {
+      pcs[peerID].RTCconnection.ondatachannel = handleDataChannelEvent.bind(this, peerID);
+    }
     console.log('Created RTCPeerConnnection');
   } catch (e) {
     console.log('Failed to create PeerConnection, exception: ' + e.message);
     alert('Cannot create RTCPeerConnection object.');
+    return;
+  }
+}
+
+function handleDataChannelEvent(peerID, event) { //das führt nur der peer aus
+    console.log('ondatachannel:', event.channel);
+    pcs[peerID].dataChannel = event.channel;
+    onDataChannelCreated(pcs[peerID].dataChannel, peerID);
+}
+
+function onDataChannelCreated(channel, peerID) { //das führen beide aus
+  console.log('Created data channel: ', channel, 'for ', peerID);
+
+  channel.onopen = function() {
+    console.log('Channel opened');
+    if(isInitiator)
+      sendRTCMessage("log", "Sweeeeeeeeeeet!");
+  };
+
+  channel.onmessage = handleMessage.bind(this, channel);
+}
+
+function handleMessage(channel, event) {
+  let data = JSON.parse(event.data);
+  if(data.cmd === "log"){
+    console.log('Recieved message from peer: ', data.data);
+    setTimeout(function () {
+      if(!isInitiator)
+        sendRTCMessage("log", "Duuuuuuude!", presenterID);
+      else
+        sendRTCMessage("log", "Sweeeeeeeeeeet!");
+    }, 1000);
+  } else {
     return;
   }
 }
@@ -228,12 +284,12 @@ function handleCreateOfferError(event) {
 
 function doCall(peerID) { //das macht der Präsentator
   //console.log('Sending offer to peer');
-  pcs[peerID].createOffer(setLocalAndSendMessage.bind(this, peerID), handleCreateOfferError);
+  pcs[peerID].RTCconnection.createOffer(setLocalAndSendMessage.bind(this, peerID), handleCreateOfferError);
 }
 
 function doAnswer(peerID) {
   //console.log('Sending answer to initiator.');
-  pcs[peerID].createAnswer().then(
+  pcs[peerID].RTCconnection.createAnswer().then(
     setLocalAndSendMessage.bind(this, peerID),
     onCreateSessionDescriptionError
   );
@@ -242,7 +298,7 @@ function doAnswer(peerID) {
 function setLocalAndSendMessage(peerID, sessionDescription) {
   // Set Opus as the preferred codec in SDP if Opus is present.
   sessionDescription.sdp = preferOpus(sessionDescription.sdp);
-  pcs[peerID].setLocalDescription(sessionDescription);
+  pcs[peerID].RTCconnection.setLocalDescription(sessionDescription);
   //console.log('setLocalAndSendMessage sending message', sessionDescription);
   sendMessage(sessionDescription.type, sessionDescription, peerID);
 }
@@ -286,8 +342,8 @@ function handleRemoteStreamRemoved(event) {
 
 function hangup() { //called by peer
   console.log('Hanging up.');
-  stop(presenterID);
   sendMessage('bye', undefined, presenterID);
+  stop(presenterID);
 }
 
 function handleRemoteHangup(peerID) { //called by initiator
@@ -296,7 +352,8 @@ function handleRemoteHangup(peerID) { //called by initiator
 }
 
 function stop(peerID) {
-    pcs[peerID].close();
+    pcs[peerID].dataChannel.close();
+    pcs[peerID].RTCconnection.close();
     delete pcs[peerID];
     if(!isInitiator)
       socket.close();

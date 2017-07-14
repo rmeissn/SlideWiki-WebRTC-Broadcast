@@ -2,10 +2,12 @@
 
 let os = require('os');
 
+let port = (process.env.APPLICATION_PORT) ? process.env.APPLICATION_PORT : 8080;
+
 let fileServer = new(require('node-static').Server)();
 let app = require('http').createServer(function(req, res) {
   fileServer.serve(req, res);
-}).listen(8080);
+}).listen(port);
 
 let io = require('socket.io')(app);
 

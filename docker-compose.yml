@@ -1,0 +1,9 @@
+template:
+  build: ./
+  expose:
+    - "80"
+  environment:
+    - APPLICATION_PORT=80
+    - VIRTUAL_HOST=webrtctest.spdns.de
+    - LETSENCRYPT_HOST=webrtctest.spdns.de
+    - LETSENCRYPT_EMAIL=meissner@informatik.uni-leipzig.de
