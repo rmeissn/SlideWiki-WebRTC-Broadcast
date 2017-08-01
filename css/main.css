@@ -85,9 +85,6 @@ img {
 p {
   color: #444;
   font-weight: 300;
-  line-height: 1.6em;
-  border-bottom: 1px solid #aaa;
-  padding: 0 0 20px 0;
 }
 
 section p:last-of-type {

@@ -1,16 +1,13 @@
 'use strict';
 
 var isInitiator = false;
-var peerFinished = false;
 var localStream;
 var myID;
 var presenterID;
 //var pcs = [];
-var pcs = {} // {<socketID>: RPC, <socketID>: RPC}
-var isStarted = [false];
+var pcs = {} // {<socketID>: {RTCConnection: RPC, dataChannel: dataChannel}, <socketID>: {RTCConnection: RPC, dataChannel: dataChannel}}
 var remoteStreams = [];
 var turnReady;
-var readyForCandidates = false;
 
 //TODO statt mit peerFinished mit Sender und Empfänger arbeiten, da ich nicht bestimmen kann ob der peer finished ist
 
@@ -47,13 +44,14 @@ socket.on('created', (room, socketID) => { //erhält nur Präsentator
   console.log('Created room ' + room);
   isInitiator = true;
   setMyID();
+  $('#slidewikiPresentation').on("load", activateIframeListeners);
   requestStreams({
     audio: true,
-    video: {
-      width: { min: 480, ideal: 720, max: 1920 },
-      height: { min: 360, ideal: 540, max: 1080 },
-      facingMode: "user"
-    }
+    // video: {
+    //   width: { min: 480, ideal: 720, max: 1920 },
+    //   height: { min: 360, ideal: 540, max: 1080 },
+    //   facingMode: "user"
+    // }
   });
 });
 
@@ -70,6 +68,7 @@ socket.on('joined', (room) => { //erhält nur der Listener, der gerade beitritt
   // a listener has joined the room
   console.log('joined: ' + room);
   setMyID();
+  $('#slidewikiPresentation').on("load", activateIframeListeners);
   requestStreams({
     audio: false,
     video: false
@@ -125,7 +124,6 @@ socket.on('message', function(message) {
       start(message.sender);
     } else if (message.cmd === 'offer' || (message.cmd === 'answer' && isInitiator)) { //offer kommt von initiator, answer von peer
       pcs[message.sender].RTCconnection.setRemoteDescription(new RTCSessionDescription(message.data));
-      readyForCandidates = true;
       if(message.cmd === 'offer') // führt nur der peer aus
         doAnswer(message.sender);
    } if (message.cmd === 'candidate') {
@@ -136,9 +134,7 @@ socket.on('message', function(message) {
        });
        pcs[message.sender].RTCconnection.addIceCandidate(candidate).catch((e) => {}); //Catch defective candidates
      } catch (e) {}
-   } else if (message.cmd === 'bye' && isInitiator) { //TODO später umbauen auf RPC transmission of commands
-      handleRemoteHangup(message.sender);
-    }
+   }
   }
 });
 
@@ -156,10 +152,11 @@ function requestStreams(options) {
 function gotStream(stream) {
   console.log('Adding local stream.');
   if(isInitiator) {
-    $('#videos').append('<video id="localVideo" autoplay></video>');
-    let localVideo = document.querySelector('#localVideo');
-    localVideo.srcObject = stream;
-    $('#videos').before('<p>This is me</p>');
+    //$('#videos').append('<video id="localVideo" autoplay></video>');
+    //let localVideo = document.querySelector('#localVideo');
+    //localVideo.srcObject = stream;
+    $('#resumeRemoteControl').before('<p>You are the presenter, other poeple will hear your voice and reflect your presentation progress.</p>');
+    $('#videos').remove();
   }
   localStream = stream;
   function sendASAP () {
@@ -191,7 +188,6 @@ function start(peerID) {
 }
 
 window.onbeforeunload = function() {
-  sendMessage('bye', undefined, presenterID);
   hangup();
 };
 
@@ -223,16 +219,31 @@ function createPeerConnection(peerID) {
 function handleDataChannelEvent(peerID, event) { //das führt nur der peer aus
     console.log('ondatachannel:', event.channel);
     pcs[peerID].dataChannel = event.channel;
+    pcs[peerID].dataChannel.onclose = handleRPCClose;//NOTE dirty workaround as browser are currently not implementing RPC.onconnectionstatechange
     onDataChannelCreated(pcs[peerID].dataChannel, peerID);
+}
+
+function handleRPCClose() {
+  if(!isInitiator){
+    alert('The presenter closed the session. This window will close now.');
+    handleRemoteHangup(presenterID);
+    $('#videos').empty();//TODO redirect instead!
+  }
 }
 
 function onDataChannelCreated(channel, peerID) { //das führen beide aus
   console.log('Created data channel: ', channel, 'for ', peerID);
+  /*NOTE
+  * Browsers do currenty not support events that indicate whether ICE exchange has finished or not and the RPC connection has been fully established. Thus, I'm waiting for latest event onDataChannelCreated in order to close the socket after some time. This should be relativly safe.
+  */
+  if(!isInitiator && socket.disconnected === false){
+    setTimeout(() => {socket.close();}, 5000); //close socket after 5 secs
+  }
 
   channel.onopen = function() {
-    console.log('Channel opened');
+    console.log('Data Channel opened');
     if(isInitiator)
-      sendRTCMessage("log", "Sweeeeeeeeeeet!");
+      sendRTCMessage('gotoslide', currentSlide, peerID);
   };
 
   channel.onmessage = handleMessage.bind(this, channel);
@@ -240,16 +251,19 @@ function onDataChannelCreated(channel, peerID) { //das führen beide aus
 
 function handleMessage(channel, event) {
   let data = JSON.parse(event.data);
-  if(data.cmd === "log"){
-    console.log('Recieved message from peer: ', data.data);
-    setTimeout(function () {
+  switch (data.cmd) {
+    case "gotoslide":
       if(!isInitiator)
-        sendRTCMessage("log", "Duuuuuuude!", presenterID);
-      else
-        sendRTCMessage("log", "Sweeeeeeeeeeet!");
-    }, 1000);
-  } else {
-    return;
+        changeSlide(data.data);
+      break;
+    case "log":
+      console.log('Recieved message from peer: ', data.data);
+      break;
+    case "bye":
+      handleRemoteHangup(data.data);
+      break;
+    default:
+
   }
 }
 
@@ -274,7 +288,7 @@ function handleRemoteStreamAdded(event) {
     let remoteVideos = $('.remoteVideos');
     remoteVideos[remoteVideos.length - 1].srcObject = event.stream;
     remoteStreams[remoteVideos.length - 1] = event.stream;
-    $('#videos').before('<p>This is the presenter</p>');
+    $('#resumeRemoteControl').before('<p>You are now listening to the presenter. The presentation you see will reflect his progress.</p>');
   }
 }
 
@@ -340,24 +354,34 @@ function handleRemoteStreamRemoved(event) {
   console.log('Remote stream removed. Event: ', event);
 }
 
-function hangup() { //called by peer
+function hangup() { //called by peer and by initiatior
   console.log('Hanging up.');
-  sendMessage('bye', undefined, presenterID);
-  stop(presenterID);
+  if(isInitiator){
+    stop(undefined, true);
+  } else {
+    sendRTCMessage('bye', myID, presenterID);
+    stop(presenterID);
+  }
+  //NOTE Don't need to close the socket, as the browser does this automatically if the window closes
 }
 
 function handleRemoteHangup(peerID) { //called by initiator
-  console.log('Session terminated.');
+  console.log('Terminating session for ', peerID);
   stop(peerID);
 }
 
-function stop(peerID) {
+function stop(peerID, presenter = false) {
+  if (presenter) {
+    for (var i in pcs) {
+      pcs[i].dataChannel.close();
+      pcs[i].RTCconnection.close();
+      delete pcs[i];
+    }
+  } else {
     pcs[peerID].dataChannel.close();
     pcs[peerID].RTCconnection.close();
     delete pcs[peerID];
-    if(!isInitiator)
-      socket.close();
-  //}
+  }
 }
 
 ///////////////////////////////////////////
@@ -436,4 +460,47 @@ function removeCN(sdpLines, mLineIndex) {
 
   sdpLines[mLineIndex] = mLineElements.join(' ');
   return sdpLines;
+}
+
+
+/////////////////////////////////////////// SlideWiki specific stuff
+
+let lastRemoteSlide = '';//TODO prefill this with first slide
+let paused = false; //user has manually paused slide transitions
+let currentSlide = '';//TODO prefill this with first slide
+
+$("#resumeRemoteControl").click(() => {
+  resumeRemoteControl();
+});
+
+function resumeRemoteControl() {
+  paused = false;
+  $("#resumeRemoteControl").hide();
+  changeSlide(lastRemoteSlide);
+}
+
+function activateIframeListeners() {
+  console.log('Adding iframe listeners');
+  let iframe = $('#slidewikiPresentation').contents();
+  if (isInitiator) {
+    iframe.on('slidechanged', () => {
+      currentSlide = document.getElementById("slidewikiPresentation").contentWindow.location.href;
+      sendRTCMessage('gotoslide', currentSlide);
+    });
+  } else {
+    iframe.on('slidechanged', () => {
+      if (document.getElementById("slidewikiPresentation").contentWindow.location.href !== lastRemoteSlide){
+        paused = true;
+        $("#resumeRemoteControl").show();
+      }
+    });
+  }
+}
+
+function changeSlide(slideID) { // only executed by peers
+  lastRemoteSlide = slideID;
+  if(!paused){
+    console.log('Changing to slide: ',slideID);
+    $('#slidewikiPresentation').attr('src', slideID);
+  }
 }
