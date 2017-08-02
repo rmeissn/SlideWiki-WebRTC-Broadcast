@@ -465,9 +465,9 @@ function removeCN(sdpLines, mLineIndex) {
 
 /////////////////////////////////////////// SlideWiki specific stuff
 
-let lastRemoteSlide = '';//TODO prefill this with first slide
+let lastRemoteSlide = document.getElementById("slidewikiPresentation").src;
 let paused = false; //user has manually paused slide transitions
-let currentSlide = '';//TODO prefill this with first slide
+let currentSlide = document.getElementById("slidewikiPresentation").src;
 
 $("#resumeRemoteControl").click(() => {
   resumeRemoteControl();
@@ -482,6 +482,18 @@ function resumeRemoteControl() {
 function activateIframeListeners() {
   console.log('Adding iframe listeners');
   let iframe = $('#slidewikiPresentation').contents();
+  /* Currently doesn't work - Stackoverflow Question:
+  * https://stackoverflow.com/questions/45457271/forward-a-keydown-event-from-the-parent-window-to-an-iframe
+  */
+  // $(document).keydown((event) => {
+  //   console.log(event, event.keyCode);
+  //   var newEvent = new KeyboardEvent("keydown", {key: event.originalEvent.key, code: event.originalEvent.code, charCode: event.originalEvent.charCode, keyCode: event.originalEvent.keyCode, which: event.originalEvent.which});
+  //   //frames['slidewikiPresentation'].document.dispatchEvent(newEvent);
+  //   document.getElementById("slidewikiPresentation").contentWindow.document.dispatchEvent(newEvent);
+  //   //elem.dispatchEvent(event);
+  //   //var e = jQuery.Event( "keydown", { keyCode: event.keyCode } );
+  //   //$('#slidewikiPresentation')[0].contentWindow.$('body').trigger(e);
+  // });
   if (isInitiator) {
     iframe.on('slidechanged', () => {
       currentSlide = document.getElementById("slidewikiPresentation").contentWindow.location.href;

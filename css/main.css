@@ -1,5 +1,7 @@
 body {
   font-family: sans-serif;
+  font-size:18px;
+  background-color:#CCC;
 }
 
 video {
@@ -107,4 +109,17 @@ h1 span {
 
 strong {
   font-weight: 500;
+}
+
+.float{
+	position:fixed;
+	width:70px;
+	height:70px;
+	top:40px;
+	right:40px;
+	background-color:#1976d2;
+	color:#FFF;
+	border-radius:50px;
+	text-align:center;
+	box-shadow: 2px 2px 3px #757575;
 }
