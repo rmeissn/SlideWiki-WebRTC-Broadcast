@@ -40,6 +40,9 @@ function setMyID(){
 socket.on('created', (room, socketID) => { //only initiator recieves this
   console.log('Created room ' + room);
   isInitiator = true;
+  $('#roleText').text('You are the presenter, other poeple will hear your voice and reflect your presentation progress.');
+  $('#peerCounterText').text('Peers currently listening: ');
+  $('#peerCounter').text('0');
   setMyID();
   $('#slidewikiPresentation').on("load", activateIframeListeners);
   requestStreams({
@@ -49,6 +52,13 @@ socket.on('created', (room, socketID) => { //only initiator recieves this
     //   height: { min: 360, ideal: 540, max: 1080 },
     //   facingMode: "user"
     // }
+  });
+  swal({
+    title: '<p>Room <i>' + room + '</i> successfully created!</p>',
+    html: "<p>Other people are free to join it. At the bottom of the page is a peer counter. The current limit is 10 people.</p>",
+    type: 'info',
+    confirmButtonColor: '#3085d6',
+    confirmButtonText: 'Check'
   });
 });
 
@@ -65,6 +75,7 @@ socket.on('joined', (room) => { //only recieved by peer that tries to join
   // a listener has joined the room
   console.log('joined: ' + room);
   setMyID();
+  $('#roleText').text('You are now listening to the presenter. The presentation you see will reflect his progress.');
   $('#slidewikiPresentation').on("load", activateIframeListeners);
   requestStreams({
     audio: false,
@@ -151,7 +162,6 @@ function gotStream(stream) {
     //$('#videos').append('<video id="localVideo" autoplay></video>');
     //let localVideo = document.querySelector('#localVideo');
     //localVideo.srcObject = stream;
-    $('#resumeRemoteControl').before('<p id="roleText">You are the presenter, other poeple will hear your voice and reflect your presentation progress.</p>');
     $('#videos').remove();
   }
   localStream = stream;
@@ -205,6 +215,8 @@ function createPeerConnection(peerID) {
       pcs[peerID].RTCconnection.ondatachannel = handleDataChannelEvent.bind(this, peerID);
     }
     console.log('Created RTCPeerConnnection');
+    if(isInitiator)
+      $('#peerCounter').text(Object.keys(pcs).length);
   } catch (e) {
     console.log('Failed to create PeerConnection, exception: ' + e.message);
     alert('Cannot create RTCPeerConnection object.');
@@ -228,7 +240,7 @@ function handleRPCClose() {
       confirmButtonColor: '#3085d6',
       confirmButtonText: 'Check'
     });
-    $("#roleText").text('This presentation has ended. Feel free to look at the deck as long as you want.');
+    $('#roleText').text('This presentation has ended. Feel free to look at the deck as long as you want.');
     handleRemoteHangup(presenterID);
   }
 }
@@ -288,7 +300,6 @@ function handleRemoteStreamAdded(event) {
     let remoteVideos = $('.remoteVideos');
     remoteVideos[remoteVideos.length - 1].srcObject = event.stream;
     remoteStreams[remoteVideos.length - 1] = event.stream;
-    $('#resumeRemoteControl').before('<p id="roleText">You are now listening to the presenter. The presentation you see will reflect his progress.</p>');
   }
 }
 
@@ -379,6 +390,8 @@ function stop(peerID, presenter = false) {
     pcs[peerID].RTCconnection.close();
     delete pcs[peerID];
   }
+  if(isInitiator)
+    $('#peerCounter').text(Object.keys(pcs).length);
 }
 
 /////////////////////////////////////////// Codec specific stuff
