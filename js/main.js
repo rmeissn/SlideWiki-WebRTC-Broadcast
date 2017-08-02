@@ -59,7 +59,7 @@ socket.on('created', (room, socketID) => { //only initiator recieves this
     type: 'info',
     confirmButtonColor: '#3085d6',
     confirmButtonText: 'Check'
-  });
+  }).then(() => {activateSpeechRecognition();});
 });
 
 socket.on('join', (room, socketID) => { //whole room recieves this, except for the peer that tries to join
@@ -524,5 +524,60 @@ function changeSlide(slideID) { // called by peers
   if(!paused){
     console.log('Changing to slide: ',slideID);
     $('#slidewikiPresentation').attr('src', slideID);
+  }
+}
+
+function activateSpeechRecognition() {
+  var recognition;
+
+  if (window.hasOwnProperty('webkitSpeechRecognition')) {
+    recognition = new webkitSpeechRecognition();
+  } else if (window.hasOwnProperty('SpeechRecognition')){
+    recognition = new SpeechRecognition();
+  }
+
+  if(recognition){
+    $('body').append('<p style="color: red" id="recognitionText">Alpha Feature: Speech Recognition is enabled. Peers will recieve a transcoded version of your voice as a subtitle</p>');
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || navigator.userLanguage;
+    recognition.maxAlternatives = 0;
+    recognition.start();
+
+    recognition.onresult = function(e) {
+      console.log(e.results);
+      console.log(e.results[e.results.length - 1][0].transcript);
+      if(Object.keys(pcs).length > 0)
+        sendRTCMessage('log', e.results[e.results.length - 1][0].transcript);
+    };
+
+    recognition.onerror = function(e) {
+      console.log('Recognition error:(');
+      recognition.stop();
+    }
+    swal({
+      title: 'Speech recognition enabled',
+      html: "<p>Speech recognition is an experimental feature. If enabled, your voice will be transcoded and displayed at all peers as a subtitle.</p>",
+      type: 'info',
+      showCancelButton: true,
+      confirmButtonColor: '#3085d6',
+      cancelButtonColor: '#d33',
+      confirmButtonText: 'Okay',
+      cancelButtonText: 'Disable'
+    }).then(function () {}, function (dismiss) {
+      if (dismiss === 'cancel') {
+        recognition.stop();
+        console.log('Recognition disabled');
+        $('#recognitionText').remove();
+      }
+    });
+  } else {
+    swal({
+      title: 'Speech recognition disabled',
+      html: "<p>Your browser isn't able to transcode speech to text. Thus, your peers will not recieve a subtitle. Google Chrome is currently the only browser that support speech recognition.</p>",
+      type: 'error',
+      confirmButtonColor: '#3085d6',
+      confirmButtonText: 'Okay',
+    });
   }
 }
