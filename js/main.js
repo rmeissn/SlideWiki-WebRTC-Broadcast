@@ -4,16 +4,13 @@ var isInitiator = false;
 var localStream;
 var myID;
 var presenterID;
-//var pcs = [];
 var pcs = {} // {<socketID>: {RTCConnection: RPC, dataChannel: dataChannel}, <socketID>: {RTCConnection: RPC, dataChannel: dataChannel}}
 var remoteStreams = [];
 var turnReady;
 
-//TODO statt mit peerFinished mit Sender und Empfänger arbeiten, da ich nicht bestimmen kann ob der peer finished ist
-
 var pcConfig = {
   'iceServers': [{
-    'urls': 'stun:stun.l.google.com:19302' //TODO Ggf. eigenen STUN (und TURN?) Server hosten
+    'urls': 'stun:stun.l.google.com:19302' //TODO host own STUN (and TURN?) Server?
   }]
 };
 
@@ -40,7 +37,7 @@ function setMyID(){
   return myID;
 }
 
-socket.on('created', (room, socketID) => { //erhält nur Präsentator
+socket.on('created', (room, socketID) => { //only initiator recieves this
   console.log('Created room ' + room);
   isInitiator = true;
   setMyID();
@@ -55,7 +52,7 @@ socket.on('created', (room, socketID) => { //erhält nur Präsentator
   });
 });
 
-socket.on('join', (room, socketID) => { //erhält der ganze Raum, aber nicht der Listener der gerade beitritt
+socket.on('join', (room, socketID) => { //whole room recieves this, except for the peer that tries to join
   // a listener will join the room
   console.log('Another peer made a request to join room ' + room);
   if(isInitiator){
@@ -64,7 +61,7 @@ socket.on('join', (room, socketID) => { //erhält der ganze Raum, aber nicht der
   }
 });
 
-socket.on('joined', (room) => { //erhält nur der Listener, der gerade beitritt
+socket.on('joined', (room) => { //only recieved by peer that tries to join
   // a listener has joined the room
   console.log('joined: ' + room);
   setMyID();
@@ -75,7 +72,7 @@ socket.on('joined', (room) => { //erhält nur der Listener, der gerade beitritt
   });
 });
 
-socket.on('full', (room) => { //erhält nur der Listener, der gerade beitritt
+socket.on('full', (room) => { //only recieved by peer that tries to join
   console.log('Room ' + room + ' is full');
   socket.close();
   alert('This room is already full - sorry!');
@@ -87,7 +84,6 @@ socket.on('ID of presenter', (id) => {
 });
 
 socket.on('log', function(array) {
-  //console.log.apply(console, array);
   setMyID();
 });
 
@@ -114,15 +110,15 @@ function sendRTCMessage(cmd, data = undefined, receiver = undefined) {
 
 // This client receives a message
 socket.on('message', function(message) {
-  if(message.sender === myID){ //Filter für Nachrichten vom mir selbst
-    if( message.cmd === 'peer wants to connect' && Object.keys(pcs).length === 0){ //peer triggert sich selbst
+  if(message.sender === myID){ //Filter for messages from myself
+    if( message.cmd === 'peer wants to connect' && Object.keys(pcs).length === 0){ //peer triggers itself
       start(presenterID);
     }
-  } else if(message.receiver === myID){ //an mich adressiert
+  } else if(message.receiver === myID){ //adressed to me
     console.log('Recieved message from peer: ', message);
-    if( message.cmd === 'peer wants to connect' && isInitiator){ //erhalten alle außer der peer selbst, sobald ein peer zusteigt, kommt nur von peer
+    if( message.cmd === 'peer wants to connect' && isInitiator){ //Everyone recieves this, except for the peer itself, as soon as a peer joins, only from peer
       start(message.sender);
-    } else if (message.cmd === 'offer' || (message.cmd === 'answer' && isInitiator)) { //offer kommt von initiator, answer von peer
+    } else if (message.cmd === 'offer' || (message.cmd === 'answer' && isInitiator)) { //offer by initiator, answer by peer
       pcs[message.sender].RTCconnection.setRemoteDescription(new RTCSessionDescription(message.data));
       if(message.cmd === 'offer') // führt nur der peer aus
         doAnswer(message.sender);
@@ -155,7 +151,7 @@ function gotStream(stream) {
     //$('#videos').append('<video id="localVideo" autoplay></video>');
     //let localVideo = document.querySelector('#localVideo');
     //localVideo.srcObject = stream;
-    $('#resumeRemoteControl').before('<p>You are the presenter, other poeple will hear your voice and reflect your presentation progress.</p>');
+    $('#resumeRemoteControl').before('<p id="roleText">You are the presenter, other poeple will hear your voice and reflect your presentation progress.</p>');
     $('#videos').remove();
   }
   localStream = stream;
@@ -216,7 +212,7 @@ function createPeerConnection(peerID) {
   }
 }
 
-function handleDataChannelEvent(peerID, event) { //das führt nur der peer aus
+function handleDataChannelEvent(peerID, event) { //called by peer
     console.log('ondatachannel:', event.channel);
     pcs[peerID].dataChannel = event.channel;
     pcs[peerID].dataChannel.onclose = handleRPCClose;//NOTE dirty workaround as browser are currently not implementing RPC.onconnectionstatechange
@@ -225,13 +221,19 @@ function handleDataChannelEvent(peerID, event) { //das führt nur der peer aus
 
 function handleRPCClose() {
   if(!isInitiator){
-    alert('The presenter closed the session. This window will close now.');
+    swal({
+      title: '<p>The presenter closed the session!</p>',
+      html: "<p>This presentation has ended. Feel free to look at the deck as long as you want.</p>",
+      type: 'warning',
+      confirmButtonColor: '#3085d6',
+      confirmButtonText: 'Check'
+    });
+    $("#roleText").text('This presentation has ended. Feel free to look at the deck as long as you want.');
     handleRemoteHangup(presenterID);
-    $('#videos').empty();//TODO redirect instead!
   }
 }
 
-function onDataChannelCreated(channel, peerID) { //das führen beide aus
+function onDataChannelCreated(channel, peerID) { //called by peer and by initiatior
   console.log('Created data channel: ', channel, 'for ', peerID);
   /*NOTE
   * Browsers do currenty not support events that indicate whether ICE exchange has finished or not and the RPC connection has been fully established. Thus, I'm waiting for latest event onDataChannelCreated in order to close the socket after some time. This should be relativly safe.
@@ -268,8 +270,6 @@ function handleMessage(channel, event) {
 }
 
 function handleIceCandidate(peerID, event) {
-
-  //console.log('icecandidate event: ', event);
   if (event && ((event.target && event.target.iceGatheringState !== 'complete' ) || event.candidate !== null)) {
     sendMessage('candidate',{
       type: 'candidate',
@@ -288,7 +288,7 @@ function handleRemoteStreamAdded(event) {
     let remoteVideos = $('.remoteVideos');
     remoteVideos[remoteVideos.length - 1].srcObject = event.stream;
     remoteStreams[remoteVideos.length - 1] = event.stream;
-    $('#resumeRemoteControl').before('<p>You are now listening to the presenter. The presentation you see will reflect his progress.</p>');
+    $('#resumeRemoteControl').before('<p id="roleText">You are now listening to the presenter. The presentation you see will reflect his progress.</p>');
   }
 }
 
@@ -296,13 +296,11 @@ function handleCreateOfferError(event) {
   console.log('createOffer() error: ', event);
 }
 
-function doCall(peerID) { //das macht der Präsentator
-  //console.log('Sending offer to peer');
+function doCall(peerID) { //calledy by initiatior
   pcs[peerID].RTCconnection.createOffer(setLocalAndSendMessage.bind(this, peerID), handleCreateOfferError);
 }
 
 function doAnswer(peerID) {
-  //console.log('Sending answer to initiator.');
   pcs[peerID].RTCconnection.createAnswer().then(
     setLocalAndSendMessage.bind(this, peerID),
     onCreateSessionDescriptionError
@@ -313,7 +311,6 @@ function setLocalAndSendMessage(peerID, sessionDescription) {
   // Set Opus as the preferred codec in SDP if Opus is present.
   sessionDescription.sdp = preferOpus(sessionDescription.sdp);
   pcs[peerID].RTCconnection.setLocalDescription(sessionDescription);
-  //console.log('setLocalAndSendMessage sending message', sessionDescription);
   sendMessage(sessionDescription.type, sessionDescription, peerID);
 }
 
@@ -354,7 +351,7 @@ function handleRemoteStreamRemoved(event) {
   console.log('Remote stream removed. Event: ', event);
 }
 
-function hangup() { //called by peer and by initiatior
+function hangup() { //calledy by peer and by initiatior
   console.log('Hanging up.');
   if(isInitiator){
     stop(undefined, true);
@@ -384,7 +381,7 @@ function stop(peerID, presenter = false) {
   }
 }
 
-///////////////////////////////////////////
+/////////////////////////////////////////// Codec specific stuff
 
 // Set Opus as the default audio codec if it's present.
 function preferOpus(sdp) {
@@ -509,7 +506,7 @@ function activateIframeListeners() {
   }
 }
 
-function changeSlide(slideID) { // only executed by peers
+function changeSlide(slideID) { // called by peers
   lastRemoteSlide = slideID;
   if(!paused){
     console.log('Changing to slide: ',slideID);
