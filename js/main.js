@@ -545,8 +545,10 @@ function activateSpeechRecognition() {
     recognition.start();
 
     recognition.onresult = function(e) {
-      console.log(e.results);
-      console.log(e.results[e.results.length - 1][0].transcript);
+      if(e.results[e.results.length - 1][0].confidence >= 0.01){
+        console.log(e.results[e.results.length - 1][0].transcript);
+        console.log("Confidence: ", e.results[e.results.length - 1][0].confidence);
+      }
       if(Object.keys(pcs).length > 0)
         sendRTCMessage('log', e.results[e.results.length - 1][0].transcript);
     };
@@ -555,6 +557,12 @@ function activateSpeechRecognition() {
       console.log('Recognition error:(');
       recognition.stop();
     }
+
+    recognition.onend = function(e) {
+      console.log('Recognition ended itself - stupid thing! Restarting ....');
+      recognition.start();
+    };
+
     swal({
       title: 'Speech recognition enabled',
       html: "<p>Speech recognition is an experimental feature. If enabled, your voice will be transcoded and displayed at all peers as a subtitle.</p>",
